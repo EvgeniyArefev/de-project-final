@@ -18,7 +18,7 @@ vertica_host = 'vertica.tgcloudenv.ru'
 vertica_port = 5433
 vertica_database = 'dwh'
 vertica_user = 'stv202310160'
-vertica_password = 'sYPIATLm691wg2i'
+vertica_password = ''
 
 # Установка подключения к Vertica
 vertica_connection = connect(
