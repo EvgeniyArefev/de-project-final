@@ -1,98 +1,106 @@
-from datetime import datetime
-import pandas as pd
-import psycopg2
-from vertica_python import connect
+import pendulum
+import io
 
 from airflow import DAG
 from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.providers.vertica.hooks.vertica import VerticaHook
 from airflow.operators.python import PythonOperator
-from airflow.operators.empty import EmptyOperator
+from airflow.operators.dummy_operator import DummyOperator
 
 
+# Подключение Postgres
 postgres_conn_id = 'PG_WAREHOUSE_CONNECTION'
 psql_hook = PostgresHook(postgres_conn_id)
-psql_connection = dwh_hook.get_conn()
+psql_connection = psql_hook.get_conn()
 
-# Параметры подключения к Vertica
-vertica_host = 'vertica.tgcloudenv.ru'
-vertica_port = 5433
-vertica_database = 'dwh'
-vertica_user = 'stv202310160'
-vertica_password = ''
-
-# Установка подключения к Vertica
-vertica_connection = connect(
-    host=vertica_host,
-    port=vertica_port,
-    database=vertica_database,
-    user=vertica_user,
-    password=vertica_password,
-    autocommit=True
-)
+# Подключение Vertica
+vertica_conn_id = 'VERTICA_CONNCETION'
+vertica_hook = VerticaHook(vertica_conn_id)
+vertica_connection = vertica_hook.get_conn()
 
 
-def upload_from_postgre_to_csv(connection, data):
+def upload_from_postgre(connection, table_name, field_with_date, scheduled_date):
     with connection as conn:
         with conn.cursor() as cur:
             sql = (
                 f"""
                 copy (
                     select * 
-                    from public.{data}
-                    where transaction_dt::date = '2022-10-25' and operation_id = '2a1aefa7-253a-4110-800b-26dd50037a48'
+                    from public.{table_name}
+                    where {field_with_date}::date = '{scheduled_date}'::date-1
                     ) 
-                to stdout with csv header;
+                to stdout;
                 """
             )
-            with open(f'./{data}.csv', 'w') as file:
-                cur.copy_expert(sql, file)
+            input = io.StringIO()
+            cur.copy_expert(sql, input)
 
+    return input
 
-def load_from_csv_to_vertica(connection, data):
-    df = pd.read_csv(f'./{data}.csv')
-    columns = ','.join(df.columns)
-
+def load_to_vertica(connection, schema, table_name, field_with_date, scheduled_date, postgres_data):
     with connection as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f""" 
-                delete from STV202310160__STAGING.{data}
-                where operation_id = '2a1aefa7-253a-4110-800b-26dd50037a48';
+                delete from {schema}.{table_name}
+                where {field_with_date}::date = '{scheduled_date}'::date-1;
                 """
             )
 
-            cur.execute(
+            cur.copy(
                 f""" 
-                copy STV202310160__STAGING.{data} ({columns})
-                from local './{data}.csv'
-                delimiter ',';
-                """
+                copy {schema}.{table_name}
+                from stdin 
+                delimiter e'\t';
+                """,
+                postgres_data.getvalue() 
             )
 
+def update_data(psql_connection, vertica_connection, vertica_schema, table_name, field_with_date, scheduled_date):
+    postgres_data = upload_from_postgre(psql_connection, table_name, field_with_date, scheduled_date)
+
+    load_to_vertica(vertica_connection, vertica_schema, table_name, field_with_date, scheduled_date, postgres_data)
 
 with DAG (
     dag_id = 'load_to_staging',
-    schedule_interval='0 0 * * *',
-    start_date=datetime.today()
+    schedule_interval='@daily',
+    start_date=pendulum.parse('2022-10-02'),
+    end_date=pendulum.parse('2022-11-02'),
+    catchup=True
 ) as dag:
-    upload_transactions_from_psql = PythonOperator(
-        task_id='upload_transactions_from_psql',
-        python_callable=upload_from_postgre_to_csv,
+    start = DummyOperator(task_id='start')
+
+    load_transactions = PythonOperator(
+        task_id='load_transactions',
+        python_callable=update_data,
         op_kwargs={
-            'connection': psql_connection,
-            'data': 'transactions'
+            'psql_connection': psql_connection,
+            'vertica_connection': vertica_connection, 
+            'vertica_schema': 'STV202310160__STAGING',
+            'table_name': 'transactions',
+            'field_with_date': 'transaction_dt',
+            'scheduled_date': '{{ ds }}'
         }
     )
 
-    load_transactions_to_vertica = PythonOperator(
-        task_id='load_transactions_to_vertica',
-        python_callable=load_from_csv_to_vertica,
+    load_currencies = PythonOperator(
+        task_id='load_currencies',
+        python_callable=update_data,
         op_kwargs={
-            'connection': vertica_connection,
-            'data': 'transactions'
+            'psql_connection': psql_connection,
+            'vertica_connection': vertica_connection, 
+            'vertica_schema': 'STV202310160__STAGING',
+            'table_name': 'currencies',
+            'field_with_date': 'date_update',
+            'scheduled_date': '{{ ds }}'
         }
     )
 
-    upload_transactions_from_psql >> load_transactions_to_vertica
+    end = DummyOperator(task_id='end')
 
-
+    (
+    start 
+    >> load_transactions 
+    >> load_currencies 
+    >> end
+    )
