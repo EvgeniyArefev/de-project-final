@@ -33,7 +33,7 @@ using (
 			and t.currency_code = c.currency_code 
 			and c.currency_code_with = 420
 		where 
-			t.transaction_dt::date = '{date}'::date
+			t.transaction_dt::date = '{date}'::date-1
 			and t.account_number_from >= 0
 			and t.status = 'done'
 		) as t

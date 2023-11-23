@@ -10,14 +10,15 @@ from airflow.operators.dummy_operator import DummyOperator
 vertica_conn_id = 'VERTICA_CONNCETION'
 vertica_hook = VerticaHook(vertica_conn_id)
 vertica_connection = vertica_hook.get_conn()
+vertica_connection.autocommit = True
 
 def load_to_dwh_tab(connection, scheduled_date):
-    with open('../sql/dml_dwh.sql', 'r') as file:
-        sql = file.read().format(date=scheduled_date)
-        
+    sql_file = open('../sql/dml_dwh.sql', 'r').read()
+    sql_query = sql_file.format(date=scheduled_date)
+
     with connection as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql_query)
 
 
 with DAG (
