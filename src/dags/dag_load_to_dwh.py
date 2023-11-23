@@ -12,11 +12,11 @@ vertica_hook = VerticaHook(vertica_conn_id)
 vertica_connection = vertica_hook.get_conn()
 
 def load_to_dwh_tab(connection, scheduled_date):
+    with open('../sql/dml_dwh.sql', 'r') as file:
+        sql = file.read().format(date=scheduled_date)
+        
     with connection as conn:
         with conn.cursor() as cur:
-            with open('../sql/dml_dwh.sql', 'r') as file:
-                sql = file.read().format(date=scheduled_date)
-
             cur.execute(sql)
 
 
