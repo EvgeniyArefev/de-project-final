@@ -5,7 +5,7 @@ using (
 		t.currency_code as currency_from ,
 		sum(t.amount_with_curr_div) as amount_total,
 		count(distinct operation_id) as cnt_transactions,
-		count(*)/count(distinct account_number) as avg_transactions_per_account,
+		count(distinct operation_id)/count(distinct account_number) as avg_transactions_per_account,
 		count(distinct account_number) as cnt_accounts_make_transactions
 	from (
 		select
